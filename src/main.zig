@@ -24,68 +24,59 @@ fn beta(z: f64) f64 {
         0.00042419 * math.pow(f64, zl, 7);
 }
 
-pub fn HyperLogLog(allocator: *Allocator) type {
-    return struct {
-        const Self = @This();
+const HyperLogLog = struct {
+    const Self = @This();
+    data: []u8,
+    allocator: Allocator,
 
-        data: []u8,
+    pub fn init(allocator: Allocator) !Self {
+        var data = allocator.alloc(u8, m) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+        };
+        for (data) |*x| {
+            x.* = 0;
+        }
+        return Self{ .data = data, .allocator = allocator };
+    }
 
-        pub fn init() !Self {
-            var data = allocator.alloc(u8, m) catch |err| switch (err) {
-                error.OutOfMemory => return error.OutOfMemory,
-            };
-            for (data) |*x| {
-                x.* = 0;
+    pub fn deinit(self: *Self) void {
+        self.allocator.free(self.data);
+    }
+
+    pub fn addHashed(self: *Self, hash: u64) void {
+        var k = hash >> max;
+        var val = @intCast(u8, @clz((hash << precision) ^ maxX)) + 1;
+        if (val > self.data[k]) {
+            self.data[k] = val;
+        }
+    }
+
+    pub fn cardinality(self: *Self) f64 {
+        var sum: f64 = 0;
+        var z: f64 = 0;
+        for (self.data) |x| {
+            if (x == 0) {
+                z += 1;
             }
-            return Self{ .data = data };
+            sum += 1.0 / math.pow(f64, 2.0, @intToFloat(f64, x));
         }
+        const m_float = @intToFloat(f64, @intCast(u64, self.data.len));
 
-        pub fn deinit(self: *Self) void {
-            allocator.free(self.data);
-        }
+        var est = alpha * m_float * (m_float - z) / (beta(z) + sum);
+        return est;
+    }
 
-        pub fn addHashed(self: *Self, hash: u64) void {
-            var k = hash >> max;
-            var val = @intCast(u8, @clz(u64, (hash << precision) ^ maxX)) + 1;
-            if (val > self.data[k]) {
-                self.data[k] = val;
-            }
-        }
-
-        pub fn cardinality(self: *Self) f64 {
-            var sum: f64 = 0;
-            var z: f64 = 0;
-            for (self.data) |x| {
-                if (x == 0) {
-                    z += 1;
-                }
-                sum += 1.0 / math.pow(f64, 2.0, @intToFloat(f64, x));
-            }
-            const m_float = @intToFloat(f64, @intCast(u64, self.data.len));
-
-            var est = alpha * m_float * (m_float - z) / (beta(z) + sum);
-            return est;
-        }
-
-        pub fn merge(self: *Self, other: *Self) void {
-            for (self.data) |*x, i| {
-                if (other.data[i] > x.*) {
-                    x.* = other.data[i];
-                }
+    pub fn merge(self: *Self, other: *Self) void {
+        for (self.data) |*x, i| {
+            if (other.data[i] > x.*) {
+                x.* = other.data[i];
             }
         }
-
-        pub fn toBinary(self: *Self) ![]u8 {
-            // return copy of data
-            var data = allocator.alloc(u8, self.data.len) catch |err| switch (err) {
-                error.OutOfMemory => return error.OutOfMemory,
-            };
-        }
-    };
-}
+    }
+};
 
 test "init" {
-    var hll = HyperLogLog(testing.allocator).init() catch unreachable;
+    var hll = HyperLogLog.init(testing.allocator) catch unreachable;
     testing.expect(hll.data.len == m) catch unreachable;
 
     const x = 3 << 50;
@@ -96,7 +87,7 @@ test "init" {
     var i: u32 = 1;
     while (i <= 10000000) : (i += 1) {
         // create random u64
-        const r = rnd.random.int(u64);
+        const r = rnd.random().int(u64);
         hll.addHashed(r);
     }
 
