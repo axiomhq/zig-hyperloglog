@@ -33,7 +33,6 @@ const HyperLogLog = struct {
     dense: []u8,
     is_sparse: bool = true,
     set: sparse.Set,
-    counter: u64 = 0,
 
     pub fn init(allocator: Allocator) !Self {
         return Self{ .allocator = allocator, .dense = try allocator.alloc(u8, 0), .set = sparse.Set.init(allocator) };
@@ -80,11 +79,9 @@ const HyperLogLog = struct {
     }
 
     pub fn addHashed(self: *Self, hash: u64) !void {
-        self.counter += 1;
         if (self.is_sparse == true and self.set.len() * 4 < m) {
             return self.addToSparse(hash);
-        }
-        if (self.is_sparse == true) {
+        } else if (self.is_sparse == true) {
             try self.toDense();
         }
         try self.addToDense(hash);
@@ -97,6 +94,7 @@ const HyperLogLog = struct {
 
         var sum: f64 = 0;
         var z: f64 = 0;
+
         for (self.dense) |x| {
             if (x == 0) {
                 z += 1;
@@ -110,6 +108,27 @@ const HyperLogLog = struct {
     }
 
     pub fn merge(self: *Self, other: *Self) void {
+        // if both sparse then merge
+        if (self.is_sparse and other.is_sparse) {
+            self.set.merge(&other.set);
+            // if count is too high then switch to dense
+            if (self.set.len() * 4 > m) {
+                self.toDense() catch unreachable;
+            }
+            return;
+        } else if (other.is_sparse) {
+            // if other is sparse and self is dense then insert other into self
+            var itr = other.set.set.iterator();
+            while (itr.next()) |x| {
+                var val: u64 = x.key_ptr.*;
+                self.addHashed(val) catch unreachable;
+            }
+            return;
+        } else if (self.is_sparse) {
+            // if self is sparse and other is dense then switch to dense
+            self.toDense() catch unreachable;
+        }
+
         for (self.dense) |*x, i| {
             if (other.dense[i] > x.*) {
                 x.* = other.dense[i];
@@ -118,22 +137,24 @@ const HyperLogLog = struct {
     }
 };
 
+// ======== TESTS ========
+
+fn estimateError(got: u64, expected: u64) f64 {
+    var delta = @intToFloat(f64, got) - @intToFloat(f64, expected);
+    return math.abs(delta) / @intToFloat(f64, expected);
+}
+
 test "init" {
     var hll = HyperLogLog.init(testing.allocator) catch unreachable;
     defer hll.deinit();
 
     var i: u64 = 0;
-    while (i < 20000) : (i += 1) {
-        // hash i and add it to the hll
-        var s = std.fmt.allocPrint(testing.allocator, "{}", .{i}) catch unreachable;
-        defer testing.allocator.free(s);
-        var hash = std.hash.CityHash64.hash(s);
-
+    while (i < 200000) : (i += 1) {
+        var hash = rnd.random().int(u64);
         try hll.addHashed(hash);
     }
 
     // print cardinality
     std.debug.print("cardinality: {}\n", .{hll.cardinality()});
-    std.debug.print("counter: {}\n", .{hll.counter});
     //try testing.expect(hll.cardinality() == 1);
 }
