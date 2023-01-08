@@ -30,12 +30,16 @@ const HyperLogLog = struct {
     const Self = @This();
 
     allocator: Allocator,
-    dense: []u8,
+    dense: []u6,
     is_sparse: bool = true,
     set: sparse.Set,
 
     pub fn init(allocator: Allocator) !Self {
-        return Self{ .allocator = allocator, .dense = try allocator.alloc(u8, 0), .set = sparse.Set.init(allocator) };
+        return Self{
+            .allocator = allocator,
+            .dense = try allocator.alloc(u6, 0),
+            .set = sparse.Set.init(allocator),
+        };
     }
 
     pub fn deinit(self: *Self) void {
@@ -45,25 +49,21 @@ const HyperLogLog = struct {
         self.allocator.free(self.dense);
     }
 
-    // return void or error if out of memory
     pub fn toDense(self: *Self) !void {
-        std.debug.print("switching to dense, len: {}\n", .{self.set.len()});
-        self.dense = self.allocator.alloc(u8, m) catch |err| switch (err) {
+        defer self.set.deinit();
+        self.dense = self.allocator.alloc(u6, m) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
         };
+
         for (self.dense) |*x| {
             x.* = 0;
         }
-        if (self.is_sparse) {
-            var itr = self.set.set.iterator();
+        var itr = self.set.set.iterator();
 
-            while (itr.next()) |x| {
-                var val: u64 = x.key_ptr.*;
-                try self.addToDense(val);
-            }
-            self.set.deinit();
-            self.is_sparse = false;
+        while (itr.next()) |x| {
+            try self.addToDense(x.key_ptr.*);
         }
+        self.is_sparse = false;
     }
 
     fn addToSparse(self: *Self, hash: u64) !void {
@@ -72,7 +72,7 @@ const HyperLogLog = struct {
 
     fn addToDense(self: *Self, x: u64) !void {
         var k = x >> max;
-        var val = @intCast(u8, @clz((x << precision) ^ maxX)) + 1;
+        var val = @intCast(u6, @clz((x << precision) ^ maxX)) + 1;
         if (val > self.dense[k]) {
             self.dense[k] = val;
         }
