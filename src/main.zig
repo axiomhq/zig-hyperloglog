@@ -188,3 +188,23 @@ test "add dense" {
     try testing.expect(hll.dense.len == m);
     try testing.expect(est_err < 0.008);
 }
+
+test "merge sparse same" {
+    var hll1 = HyperLogLog.init(testing.allocator) catch unreachable;
+    defer hll1.deinit();
+    var hll2 = HyperLogLog.init(testing.allocator) catch unreachable;
+    defer hll2.deinit();
+
+    var i: u64 = 0;
+    while (i < 10) : (i += 1) {
+        var hash = rnd.random().int(u64);
+        try hll1.addHashed(hash);
+        try hll2.addHashed(hash);
+    }
+
+    hll1.merge(&hll2);
+
+    try testing.expect(hll1.is_sparse);
+    try testing.expect(hll1.set.len() == 20);
+    try testing.expect(hll1.dense.len == 0);
+}
