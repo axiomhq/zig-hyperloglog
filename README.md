@@ -1,5 +1,4 @@
-# zig-hyperloglog
-Zig library for HyperLogLog cardinality estimation
+# Zig library for HyperLogLog cardinality estimation
 
 [LogLog-Beta and More: A New Algorithm for Cardinality Estimation Based on LogLog Counting](https://arxiv.org/pdf/1612.02284.pdf) -
 by Jason Qin, Denys Kim, Yumei Tung
