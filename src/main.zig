@@ -15,7 +15,7 @@ const alpha = 0.7213 / (1.0 + 1.079 / @intToFloat(f64, m));
 var rnd = RndGen.init(0);
 
 fn beta(z: f64) f64 {
-    const zl = math.log10(z + 1);
+    const zl = math.ln(z + 1);
     return -0.370393911 * z +
         0.070471823 * zl +
         0.17393686 * math.pow(f64, zl, 2) +
