@@ -9,8 +9,9 @@ const AllocationError = error{OutOfMemory};
 const precision = 14;
 const m = 1 << precision;
 const max = 64 - precision;
-const maxX = math.maxInt(u64) >> max;
+const maxx = math.maxInt(u64) >> max;
 const alpha = 0.7213 / (1.0 + 1.079 / @intToFloat(f64, m));
+const sparse_threshold = m * 6 / 8;
 
 var rnd = RndGen.init(0);
 
@@ -50,7 +51,6 @@ const HyperLogLog = struct {
     }
 
     pub fn toDense(self: *Self) !void {
-        defer self.set.deinit();
         self.dense = self.allocator.alloc(u6, m) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
         };
@@ -64,6 +64,7 @@ const HyperLogLog = struct {
             try self.addToDense(x.key_ptr.*);
         }
         self.is_sparse = false;
+        self.set.clear();
     }
 
     fn addToSparse(self: *Self, hash: u64) !void {
@@ -72,14 +73,14 @@ const HyperLogLog = struct {
 
     fn addToDense(self: *Self, x: u64) !void {
         var k = x >> max;
-        var val = @intCast(u6, @clz((x << precision) ^ maxX)) + 1;
+        var val = @intCast(u6, @clz((x << precision) ^ maxx)) + 1;
         if (val > self.dense[k]) {
             self.dense[k] = val;
         }
     }
 
     pub fn addHashed(self: *Self, hash: u64) !void {
-        if (self.is_sparse == true and self.set.len() * 4 < m) {
+        if (self.is_sparse == true and self.set.len() < sparse_threshold) {
             return self.addToSparse(hash);
         } else if (self.is_sparse == true) {
             try self.toDense();
@@ -141,20 +142,49 @@ const HyperLogLog = struct {
 
 fn estimateError(got: u64, expected: u64) f64 {
     var delta = @intToFloat(f64, got) - @intToFloat(f64, expected);
-    return math.abs(delta) / @intToFloat(f64, expected);
+    if (delta < 0) {
+        delta = -delta;
+    }
+    return delta / @intToFloat(f64, expected);
 }
 
 test "init" {
     var hll = HyperLogLog.init(testing.allocator) catch unreachable;
     defer hll.deinit();
 
+    try testing.expect(hll.is_sparse);
+    try testing.expect(hll.set.len() == 0);
+    try testing.expect(hll.dense.len == 0);
+}
+
+test "add sparse" {
+    var hll = HyperLogLog.init(testing.allocator) catch unreachable;
+    defer hll.deinit();
+
     var i: u64 = 0;
-    while (i < 200000) : (i += 1) {
+    while (i < 10) : (i += 1) {
         var hash = rnd.random().int(u64);
         try hll.addHashed(hash);
     }
 
-    // print cardinality
-    std.debug.print("cardinality: {}\n", .{hll.cardinality()});
-    //try testing.expect(hll.cardinality() == 1);
+    try testing.expect(hll.is_sparse);
+    try testing.expect(hll.set.len() == 10);
+    try testing.expect(hll.dense.len == 0);
+}
+
+test "add dense" {
+    var hll = HyperLogLog.init(testing.allocator) catch unreachable;
+    defer hll.deinit();
+
+    var i: u64 = 0;
+    while (i < sparse_threshold + 1) : (i += 1) {
+        var hash = rnd.random().int(u64);
+        try hll.addHashed(hash);
+    }
+    var est_err = estimateError(hll.cardinality(), sparse_threshold + 1);
+
+    try testing.expect(!hll.is_sparse);
+    try testing.expect(hll.set.len() == 0);
+    try testing.expect(hll.dense.len == m);
+    try testing.expect(est_err < 0.008);
 }

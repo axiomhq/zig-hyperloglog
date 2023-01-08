@@ -18,14 +18,10 @@ pub const SetIterator = struct {
 pub const Set = struct {
     const Self = @This();
 
-    allocator: Allocator,
     set: AutoHashMap(u64, void),
 
     pub fn init(allocator: Allocator) Self {
-        return Self{
-            .allocator = allocator,
-            .set = AutoHashMap(u64, void).init(allocator),
-        };
+        return Self{ .set = AutoHashMap(u64, void).init(allocator) };
     }
 
     pub fn deinit(self: *Self) void {
@@ -38,6 +34,10 @@ pub const Set = struct {
 
     pub fn len(self: *const Self) usize {
         return self.set.count();
+    }
+
+    pub fn clear(self: *Self) void {
+        self.set.clearAndFree();
     }
 
     pub fn iterator(self: *const Self) SetIterator {
