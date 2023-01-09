@@ -283,29 +283,27 @@ test "merge sparse different" {
 test "merge sparse into dense" {
     const p = 14;
     const m = 1 << p;
-    const sparse_threshold = (m) * 3 / 4;
 
     var hll1 = try HyperLogLog(p).init(testing.allocator);
     defer hll1.deinit();
     var hll2 = try HyperLogLog(p).init(testing.allocator);
     defer hll2.deinit();
 
-    std.debug.print("sparse_threshold = {d}", .{sparse_threshold})
-
     var i: u64 = 0;
-    while (i < sparse_threshold + 1) : (i += 1) {
+    while (i < 1e6) : (i += 1) {
         var hash = rnd.random().int(u64);
         try hll1.add_hashed(hash);
     }
     i = 0;
-    while (i < sparse_threshold) : (i += 1) {
+    while (i < 1e3) : (i += 1) {
         var hash = rnd.random().int(u64);
         try hll2.add_hashed(hash);
     }
 
     try hll1.merge(&hll2);
-    var est_err = estimateError(hll1.cardinality(), 2 * sparse_threshold + 1);
+    var est_err = estimateError(hll1.cardinality(), 1e6 + 1e3);
 
+    try testing.expect(!hll1.is_sparse);
     try testing.expect(hll1.dense.len == m);
     try testing.expect(hll1.set.len() == 0);
     try testing.expect(est_err < tolerated_err);
@@ -314,7 +312,6 @@ test "merge sparse into dense" {
 test "merge dense into sparse" {
     const p = 14;
     const m = 1 << p;
-    const sparse_threshold = (m) * 3 / 4;
 
     var hll1 = try HyperLogLog(p).init(testing.allocator);
     defer hll1.deinit();
@@ -322,20 +319,21 @@ test "merge dense into sparse" {
     defer hll2.deinit();
 
     var i: u64 = 0;
-    while (i < sparse_threshold + 1) : (i += 1) {
+    while (i < 1e6) : (i += 1) {
         var hash = rnd.random().int(u64);
         try hll1.add_hashed(hash);
     }
     i = 0;
-    while (i < 10) : (i += 1) {
+    while (i < 1e3) : (i += 1) {
         var hash = rnd.random().int(u64);
         try hll2.add_hashed(hash);
     }
 
     try hll2.merge(&hll1);
-    var est_err = estimateError(hll2.cardinality(), 10 + sparse_threshold + 1);
+    var est_err = estimateError(hll1.cardinality(), 1e6 + 1e3);
 
     try testing.expect(!hll1.is_sparse);
+    try testing.expect(!hll2.is_sparse);
     try testing.expect(hll1.dense.len == m);
     try testing.expect(hll1.set.len() == 0);
     try testing.expect(est_err < tolerated_err);
