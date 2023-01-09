@@ -1,134 +1,144 @@
 const std = @import("std");
 const math = std.math;
+const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const sparse = @import("sparse.zig");
+const beta = @import("beta.zig").beta;
 const AllocationError = error{OutOfMemory};
 
-const precision = 14;
-const m = 1 << precision;
-const max = 64 - precision;
-const maxx = math.maxInt(u64) >> max;
-const alpha = 0.7213 / (1.0 + 1.079 / @intToFloat(f64, m));
-const sparse_threshold = m * 6 / 8;
-
-var rnd = RndGen.init(0);
-
-fn beta(z: f64) f64 {
-    const zl = math.ln(z + 1);
-    return -0.370393911 * z +
-        0.070471823 * zl +
-        0.17393686 * math.pow(f64, zl, 2) +
-        0.16339839 * math.pow(f64, zl, 3) +
-        -0.09237745 * math.pow(f64, zl, 4) +
-        0.03738027 * math.pow(f64, zl, 5) +
-        -0.005384159 * math.pow(f64, zl, 6) +
-        0.00042419 * math.pow(f64, zl, 7);
+fn alpha(comptime p: u8) f64 {
+    switch (p) {
+        4 => return 0.673,
+        5 => return 0.697,
+        6 => return 0.709,
+        else => return 0.7213 / (1.0 + 1.079 / @intToFloat(f64, 1 << p)),
+    }
 }
 
-const HyperLogLog = struct {
-    const Self = @This();
+pub fn HyperLogLog(comptime p: u8) type {
 
-    allocator: Allocator,
-    dense: []u6,
-    is_sparse: bool = true,
-    set: sparse.Set,
+    // check limits if p < 4 or p > 18 return error
+    assert(p >= 4 and p <= 18);
 
-    pub fn init(allocator: Allocator) !Self {
-        return Self{
-            .allocator = allocator,
-            .dense = try allocator.alloc(u6, 0),
-            .set = sparse.Set.init(allocator),
-        };
-    }
+    return struct {
+        const Self = @This();
 
-    pub fn deinit(self: *Self) void {
-        if (self.is_sparse) {
+        const m = 1 << p;
+        const alpha_m = alpha(p);
+        const max = 64 - p;
+        const maxx = math.maxInt(u64) >> max;
+        const sparse_threshold = m * 3 / 4;
+
+        allocator: Allocator,
+        set: sparse.Set,
+        dense: []u6,
+        is_sparse: bool = true,
+
+        pub fn init(allocator: Allocator) !Self {
+            return Self{
+                .allocator = allocator,
+                .set = sparse.Set.init(allocator),
+                .dense = try allocator.alloc(u6, 0),
+            };
+        }
+
+        pub fn deinit(self: *Self) void {
             self.set.deinit();
-        }
-        self.allocator.free(self.dense);
-    }
-
-    pub fn toDense(self: *Self) !void {
-        self.dense = self.allocator.alloc(u6, m) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-        };
-
-        for (self.dense) |*x| {
-            x.* = 0;
-        }
-        var itr = self.set.set.iterator();
-
-        while (itr.next()) |x| {
-            try self.addToDense(x.key_ptr.*);
-        }
-        self.is_sparse = false;
-        self.set.clear();
-    }
-
-    fn addToSparse(self: *Self, hash: u64) !void {
-        try self.set.add(hash);
-    }
-
-    fn addToDense(self: *Self, x: u64) !void {
-        var k = x >> max;
-        var val = @intCast(u6, @clz((x << precision) ^ maxx)) + 1;
-        if (val > self.dense[k]) {
-            self.dense[k] = val;
-        }
-    }
-
-    pub fn addHashed(self: *Self, hash: u64) !void {
-        if (self.is_sparse == true and self.set.len() < sparse_threshold) {
-            return self.addToSparse(hash);
-        } else if (self.is_sparse == true) {
-            try self.toDense();
-        }
-        try self.addToDense(hash);
-    }
-
-    pub fn cardinality(self: *Self) u64 {
-        if (self.is_sparse) {
-            return @intCast(u64, self.set.len());
+            self.allocator.free(self.dense);
         }
 
-        var sum: f64 = 0;
-        var z: f64 = 0;
+        fn to_dense(self: *Self) !void {
+            self.dense = try self.allocator.alloc(u6, m);
 
-        for (self.dense) |x| {
-            if (x == 0) {
-                z += 1;
+            for (self.dense) |*x| {
+                x.* = 0;
             }
-            sum += 1.0 / math.pow(f64, 2.0, @intToFloat(f64, x));
-        }
-        const m_float = @intToFloat(f64, m);
+            var itr = self.set.set.iterator();
 
-        var est = alpha * m_float * (m_float - z) / (beta(z) + sum);
-        return @floatToInt(u64, est + 0.5);
-    }
-
-    pub fn merge(self: *Self, other: *Self) !void {
-        // if other is sparse then just add all the elements
-        if (other.is_sparse) {
-            var itr = other.set.set.iterator();
             while (itr.next()) |x| {
-                var val: u64 = x.key_ptr.*;
-                try self.addHashed(val);
+                try self.add_to_dense(x.key_ptr.*);
             }
-            return;
+            self.is_sparse = false;
+            self.set.clear();
         }
 
-        if (self.is_sparse and !other.is_sparse) {
-            // if self is sparse and other is dense then switch to dense
-            try self.toDense();
+        fn add_to_sparse(self: *Self, hash: u64) !void {
+            try self.set.add(hash);
         }
 
-        for (self.dense) |*x, i| {
-            if (other.dense[i] > x.*) {
-                x.* = other.dense[i];
+        fn add_to_dense(self: *Self, x: u64) !void {
+            var k = x >> max;
+            var val = @intCast(u6, @clz((x << p) ^ maxx)) + 1;
+            if (val > self.dense[k]) {
+                self.dense[k] = val;
             }
         }
-    }
-};
+
+        pub fn add_hashed(self: *Self, hash: u64) !void {
+            if (self.is_sparse == true and self.set.len() < sparse_threshold) {
+                return self.add_to_sparse(hash);
+            } else if (self.is_sparse == true) {
+                try self.to_dense();
+            }
+            try self.add_to_dense(hash);
+        }
+
+        pub fn cardinality(self: *Self) u64 {
+            if (self.is_sparse) {
+                return @intCast(u64, self.set.len());
+            }
+
+            var sum: f64 = 0;
+            var z: f64 = 0;
+
+            for (self.dense) |x| {
+                if (x == 0) {
+                    z += 1;
+                }
+                sum += 1.0 / math.pow(f64, 2.0, @intToFloat(f64, x));
+            }
+            const m_float = @intToFloat(f64, m);
+
+            const beta_value: f64 = beta(p, z);
+            var est = alpha(p) * m_float * (m_float - z) / (beta_value + sum);
+
+            return @floatToInt(u64, est + 0.5);
+        }
+
+        pub fn merge(self: *Self, other: *Self) !void {
+            // if other is sparse then just add all the elements
+            if (other.is_sparse) {
+                var itr = other.set.set.iterator();
+                while (itr.next()) |x| {
+                    var val: u64 = x.key_ptr.*;
+                    try self.add_hashed(val);
+                }
+                return;
+            }
+
+            if (self.is_sparse and !other.is_sparse) {
+                // if self is sparse and other is dense then switch to dense
+                try self.to_dense();
+            }
+
+            for (self.dense) |*x, i| {
+                if (other.dense[i] > x.*) {
+                    x.* = other.dense[i];
+                }
+            }
+        }
+
+        pub fn debug(self: *Self) void {
+            std.debug.print("p = {d}\n", .{p});
+            std.debug.print("m = {d}\n", .{m});
+            std.debug.print("alpha_m = {d}\n", .{alpha_m});
+            std.debug.print("max = {d}\n", .{max});
+            std.debug.print("maxx = {d}\n", .{maxx});
+            std.debug.print("sparse_threshold = {d}\n", .{sparse_threshold});
+            std.debug.print("dense.len = {d}\n", .{self.dense.len});
+        }
+    };
+}
 
 // ======== TESTS ========
 
@@ -137,6 +147,8 @@ const RndGen = std.rand.DefaultPrng;
 const autoHash = std.hash.autoHash;
 const Wyhash = std.hash.Wyhash;
 const tolerated_err = 0.008;
+
+var rnd = RndGen.init(0);
 
 fn testHash(key: anytype) u64 {
     // Any hash could be used here, for testing autoHash.
@@ -154,22 +166,22 @@ fn estimateError(got: u64, expected: u64) f64 {
 }
 
 test "init" {
-    var hll = HyperLogLog.init(testing.allocator) catch unreachable;
-    defer hll.deinit();
-
-    try testing.expect(hll.is_sparse);
-    try testing.expect(hll.set.len() == 0);
-    try testing.expect(hll.dense.len == 0);
+    var hll = try HyperLogLog(14).init(testing.allocator);
+    hll.debug();
 }
 
 test "add sparse" {
-    var hll = HyperLogLog.init(testing.allocator) catch unreachable;
+    const p = 14;
+    const m = 1 << p;
+    const sparse_threshold = (m) * 3 / 4;
+
+    var hll = try HyperLogLog(p).init(testing.allocator);
     defer hll.deinit();
 
     var i: u64 = 0;
     while (i < sparse_threshold) : (i += 1) {
         var hash = rnd.random().int(u64);
-        try hll.addHashed(hash);
+        try hll.add_hashed(hash);
     }
 
     try testing.expect(hll.is_sparse);
@@ -178,33 +190,40 @@ test "add sparse" {
 }
 
 test "add dense" {
-    var hll = HyperLogLog.init(testing.allocator) catch unreachable;
+    const p = 14;
+    const m = 1 << p;
+    const sparse_threshold = (m) * 3 / 4;
+
+    var hll = try HyperLogLog(p).init(testing.allocator);
     defer hll.deinit();
 
     var i: u64 = 0;
     while (i < sparse_threshold + 1) : (i += 1) {
         var hash = rnd.random().int(u64);
-        try hll.addHashed(hash);
+        try hll.add_hashed(hash);
     }
     var est_err = estimateError(hll.cardinality(), sparse_threshold + 1);
 
     try testing.expect(!hll.is_sparse);
     try testing.expect(hll.set.len() == 0);
-    try testing.expect(hll.dense.len == m);
+    try testing.expect(hll.dense.len == 1 << 14);
     try testing.expect(est_err < tolerated_err);
 }
 
 test "merge sparse same" {
-    var hll1 = HyperLogLog.init(testing.allocator) catch unreachable;
+    const p = 14;
+    //const sparse_threshold = (1 << 14) * 3 / 4;
+
+    var hll1 = try HyperLogLog(p).init(testing.allocator);
     defer hll1.deinit();
-    var hll2 = HyperLogLog.init(testing.allocator) catch unreachable;
+    var hll2 = try HyperLogLog(p).init(testing.allocator);
     defer hll2.deinit();
 
     var i: u64 = 0;
     while (i < 10) : (i += 1) {
         var hash = rnd.random().int(u64);
-        try hll1.addHashed(hash);
-        try hll2.addHashed(hash);
+        try hll1.add_hashed(hash);
+        try hll2.add_hashed(hash);
     }
 
     try hll1.merge(&hll2);
@@ -216,17 +235,20 @@ test "merge sparse same" {
 }
 
 test "merge sparse different" {
-    var hll1 = HyperLogLog.init(testing.allocator) catch unreachable;
+    const p = 14;
+    //const sparse_threshold = (1 << 14) * 3 / 4;
+
+    var hll1 = try HyperLogLog(p).init(testing.allocator);
     defer hll1.deinit();
-    var hll2 = HyperLogLog.init(testing.allocator) catch unreachable;
+    var hll2 = try HyperLogLog(p).init(testing.allocator);
     defer hll2.deinit();
 
     var i: u64 = 0;
     while (i < 10) : (i += 1) {
         var hash = rnd.random().int(u64);
-        try hll1.addHashed(hash);
+        try hll1.add_hashed(hash);
         hash = rnd.random().int(u64);
-        try hll2.addHashed(hash);
+        try hll2.add_hashed(hash);
     }
 
     try hll1.merge(&hll2);
@@ -238,20 +260,23 @@ test "merge sparse different" {
 }
 
 test "merge sparse into dense" {
-    var hll1 = HyperLogLog.init(testing.allocator) catch unreachable;
-    defer hll1.deinit();
-    var hll2 = HyperLogLog.init(testing.allocator) catch unreachable;
-    defer hll2.deinit();
+    const p = 14;
+    const m = 1 << p;
+    const sparse_threshold = (m) * 3 / 4;
 
+    var hll1 = try HyperLogLog(p).init(testing.allocator);
+    defer hll1.deinit();
+    var hll2 = try HyperLogLog(p).init(testing.allocator);
+    defer hll2.deinit();
     var i: u64 = 0;
     while (i < sparse_threshold + 1) : (i += 1) {
         var hash = rnd.random().int(u64);
-        try hll1.addHashed(hash);
+        try hll1.add_hashed(hash);
     }
     i = 0;
     while (i < sparse_threshold) : (i += 1) {
         var hash = rnd.random().int(u64);
-        try hll2.addHashed(hash);
+        try hll2.add_hashed(hash);
     }
 
     try hll1.merge(&hll2);
@@ -263,20 +288,24 @@ test "merge sparse into dense" {
 }
 
 test "merge dense into sparse" {
-    var hll1 = HyperLogLog.init(testing.allocator) catch unreachable;
+    const p = 14;
+    const m = 1 << p;
+    const sparse_threshold = (m) * 3 / 4;
+
+    var hll1 = try HyperLogLog(p).init(testing.allocator);
     defer hll1.deinit();
-    var hll2 = HyperLogLog.init(testing.allocator) catch unreachable;
+    var hll2 = try HyperLogLog(p).init(testing.allocator);
     defer hll2.deinit();
 
     var i: u64 = 0;
     while (i < sparse_threshold + 1) : (i += 1) {
         var hash = rnd.random().int(u64);
-        try hll1.addHashed(hash);
+        try hll1.add_hashed(hash);
     }
     i = 0;
     while (i < 10) : (i += 1) {
         var hash = rnd.random().int(u64);
-        try hll2.addHashed(hash);
+        try hll2.add_hashed(hash);
     }
 
     try hll2.merge(&hll1);
@@ -289,16 +318,20 @@ test "merge dense into sparse" {
 }
 
 test "merge dense same" {
-    var hll1 = HyperLogLog.init(testing.allocator) catch unreachable;
+    const p = 14;
+    const m = 1 << p;
+    const sparse_threshold = (m) * 3 / 4;
+
+    var hll1 = try HyperLogLog(p).init(testing.allocator);
     defer hll1.deinit();
-    var hll2 = HyperLogLog.init(testing.allocator) catch unreachable;
+    var hll2 = try HyperLogLog(p).init(testing.allocator);
     defer hll2.deinit();
 
     var i: u64 = 0;
     while (i < sparse_threshold + 1) : (i += 1) {
         var hash = rnd.random().int(u64);
-        try hll1.addHashed(hash);
-        try hll2.addHashed(hash);
+        try hll1.add_hashed(hash);
+        try hll2.add_hashed(hash);
     }
 
     try hll1.merge(&hll2);
@@ -311,17 +344,21 @@ test "merge dense same" {
 }
 
 test "merge dense different" {
-    var hll1 = HyperLogLog.init(testing.allocator) catch unreachable;
+    const p = 14;
+    const m = 1 << p;
+    const sparse_threshold = (m) * 3 / 4;
+
+    var hll1 = try HyperLogLog(p).init(testing.allocator);
     defer hll1.deinit();
-    var hll2 = HyperLogLog.init(testing.allocator) catch unreachable;
+    var hll2 = try HyperLogLog(p).init(testing.allocator);
     defer hll2.deinit();
 
     var i: u64 = 0;
     while (i < sparse_threshold + 1) : (i += 1) {
         var hash = testHash(i);
-        try hll1.addHashed(hash);
+        try hll1.add_hashed(hash);
         hash = testHash(sparse_threshold + 1 + i);
-        try hll2.addHashed(hash);
+        try hll2.add_hashed(hash);
     }
 
     try hll1.merge(&hll2);
