@@ -290,6 +290,8 @@ test "merge sparse into dense" {
     var hll2 = try HyperLogLog(p).init(testing.allocator);
     defer hll2.deinit();
 
+    std.debug.print("sparse_threshold = {d}", .{sparse_threshold})
+
     var i: u64 = 0;
     while (i < sparse_threshold + 1) : (i += 1) {
         var hash = rnd.random().int(u64);
