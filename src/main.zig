@@ -15,8 +15,11 @@ fn alpha(comptime p: u8) f64 {
     }
 }
 
-pub fn HyperLogLog(comptime p: u8) type {
+pub fn DefaultHyperLogLog() type {
+    return HyperLogLog(14);
+}
 
+pub fn HyperLogLog(comptime p: u8) type {
     // check limits if p < 4 or p > 18 return error
     assert(p >= 4 and p <= 18);
 
