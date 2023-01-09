@@ -189,7 +189,7 @@ test "add sparse" {
     try testing.expect(hll.dense.len == 0);
 }
 
-test "add dense" {
+test "add dense p = 14" {
     const p = 14;
     const m = 1 << p;
     const sparse_threshold = (m) * 3 / 4;
@@ -207,6 +207,27 @@ test "add dense" {
     try testing.expect(!hll.is_sparse);
     try testing.expect(hll.set.len() == 0);
     try testing.expect(hll.dense.len == 1 << 14);
+    try testing.expect(est_err < tolerated_err);
+}
+
+test "add dense p = 16" {
+    const p = 16;
+    const m = 1 << p;
+    const sparse_threshold = (m) * 3 / 4;
+
+    var hll = try HyperLogLog(p).init(testing.allocator);
+    defer hll.deinit();
+
+    var i: u64 = 0;
+    while (i < sparse_threshold + 1) : (i += 1) {
+        var hash = rnd.random().int(u64);
+        try hll.add_hashed(hash);
+    }
+    var est_err = estimateError(hll.cardinality(), sparse_threshold + 1);
+
+    try testing.expect(!hll.is_sparse);
+    try testing.expect(hll.set.len() == 0);
+    try testing.expect(hll.dense.len == 1 << 16);
     try testing.expect(est_err < tolerated_err);
 }
 
@@ -268,6 +289,7 @@ test "merge sparse into dense" {
     defer hll1.deinit();
     var hll2 = try HyperLogLog(p).init(testing.allocator);
     defer hll2.deinit();
+
     var i: u64 = 0;
     while (i < sparse_threshold + 1) : (i += 1) {
         var hash = rnd.random().int(u64);
