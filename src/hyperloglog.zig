@@ -47,7 +47,7 @@ pub fn HyperLogLog(comptime p: u8) type {
             self.allocator.free(self.dense);
         }
 
-        fn to_dense(self: *Self) !void {
+        fn toDense(self: *Self) !void {
             self.dense = try self.allocator.alloc(u6, m);
 
             for (self.dense) |*x| {
@@ -56,17 +56,17 @@ pub fn HyperLogLog(comptime p: u8) type {
             var itr = self.set.set.iterator();
 
             while (itr.next()) |x| {
-                try self.add_to_dense(x.key_ptr.*);
+                try self.addToDense(x.key_ptr.*);
             }
             self.is_sparse = false;
             self.set.clear();
         }
 
-        fn add_to_sparse(self: *Self, hash: u64) !void {
+        fn addToSparse(self: *Self, hash: u64) !void {
             try self.set.add(hash);
         }
 
-        fn add_to_dense(self: *Self, x: u64) !void {
+        fn addToDense(self: *Self, x: u64) !void {
             const k = x >> max;
             const val = @as(u6, @intCast(@clz((x << p) ^ maxx))) + 1;
             if (val > self.dense[k]) {
@@ -74,13 +74,13 @@ pub fn HyperLogLog(comptime p: u8) type {
             }
         }
 
-        pub fn add_hashed(self: *Self, hash: u64) !void {
+        pub fn addHashed(self: *Self, hash: u64) !void {
             if (self.is_sparse == true and self.set.len() < sparse_threshold) {
-                return self.add_to_sparse(hash);
+                return self.addToSparse(hash);
             } else if (self.is_sparse == true) {
-                try self.to_dense();
+                try self.toDense();
             }
-            try self.add_to_dense(hash);
+            try self.addToDense(hash);
         }
 
         pub fn cardinality(self: *Self) u64 {
@@ -111,14 +111,14 @@ pub fn HyperLogLog(comptime p: u8) type {
                 var itr = other.set.set.iterator();
                 while (itr.next()) |x| {
                     const val: u64 = x.key_ptr.*;
-                    try self.add_hashed(val);
+                    try self.addHashed(val);
                 }
                 return;
             }
 
             if (self.is_sparse and !other.is_sparse) {
                 // if self is sparse and other is dense then switch to dense
-                try self.to_dense();
+                try self.toDense();
             }
 
             for (self.dense, 0..) |*x, i| {
@@ -181,7 +181,7 @@ test "add sparse" {
     var i: u64 = 0;
     while (i < sparse_threshold) : (i += 1) {
         const hash = rnd.random().int(u64);
-        try hll.add_hashed(hash);
+        try hll.addHashed(hash);
     }
 
     try testing.expect(hll.is_sparse);
@@ -200,7 +200,7 @@ test "add dense p = 14" {
     var i: u64 = 0;
     while (i < sparse_threshold + 1) : (i += 1) {
         const hash = rnd.random().int(u64);
-        try hll.add_hashed(hash);
+        try hll.addHashed(hash);
     }
     const est_err = estimateError(hll.cardinality(), sparse_threshold + 1);
 
@@ -221,7 +221,7 @@ test "add dense p = 16" {
     var i: u64 = 0;
     while (i < sparse_threshold + 1) : (i += 1) {
         const hash = rnd.random().int(u64);
-        try hll.add_hashed(hash);
+        try hll.addHashed(hash);
     }
     const est_err = estimateError(hll.cardinality(), sparse_threshold + 1);
 
@@ -243,8 +243,8 @@ test "merge sparse same" {
     var i: u64 = 0;
     while (i < 10) : (i += 1) {
         const hash = rnd.random().int(u64);
-        try hll1.add_hashed(hash);
-        try hll2.add_hashed(hash);
+        try hll1.addHashed(hash);
+        try hll2.addHashed(hash);
     }
 
     try hll1.merge(&hll2);
@@ -267,9 +267,9 @@ test "merge sparse different" {
     var i: u64 = 0;
     while (i < 10) : (i += 1) {
         var hash = rnd.random().int(u64);
-        try hll1.add_hashed(hash);
+        try hll1.addHashed(hash);
         hash = rnd.random().int(u64);
-        try hll2.add_hashed(hash);
+        try hll2.addHashed(hash);
     }
 
     try hll1.merge(&hll2);
@@ -292,12 +292,12 @@ test "merge sparse into dense" {
     var i: u64 = 0;
     while (i < 1e6) : (i += 1) {
         const hash = rnd.random().int(u64);
-        try hll1.add_hashed(hash);
+        try hll1.addHashed(hash);
     }
     i = 0;
     while (i < 1e3) : (i += 1) {
         const hash = rnd.random().int(u64);
-        try hll2.add_hashed(hash);
+        try hll2.addHashed(hash);
     }
 
     try hll1.merge(&hll2);
@@ -321,12 +321,12 @@ test "merge dense into sparse" {
     var i: u64 = 0;
     while (i < 1e6) : (i += 1) {
         const hash = rnd.random().int(u64);
-        try hll1.add_hashed(hash);
+        try hll1.addHashed(hash);
     }
     i = 0;
     while (i < 1e3) : (i += 1) {
         const hash = rnd.random().int(u64);
-        try hll2.add_hashed(hash);
+        try hll2.addHashed(hash);
     }
 
     try hll2.merge(&hll1);
@@ -352,8 +352,8 @@ test "merge dense same" {
     var i: u64 = 0;
     while (i < sparse_threshold + 1) : (i += 1) {
         const hash = rnd.random().int(u64);
-        try hll1.add_hashed(hash);
-        try hll2.add_hashed(hash);
+        try hll1.addHashed(hash);
+        try hll2.addHashed(hash);
     }
 
     try hll1.merge(&hll2);
@@ -378,9 +378,9 @@ test "merge dense different" {
     var i: u64 = 0;
     while (i < sparse_threshold + 1) : (i += 1) {
         var hash = testHash(i);
-        try hll1.add_hashed(hash);
+        try hll1.addHashed(hash);
         hash = testHash(sparse_threshold + 1 + i);
-        try hll2.add_hashed(hash);
+        try hll2.addHashed(hash);
     }
 
     try hll1.merge(&hll2);

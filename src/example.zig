@@ -14,7 +14,7 @@ pub fn main() !void {
     var i: u64 = 0;
     while (i < count) : (i += 1) {
         const x = rnd.random().int(u64);
-        try hll.add_hashed(x);
+        try hll.addHashed(x);
     }
 
     const est = hll.cardinality();
