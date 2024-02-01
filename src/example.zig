@@ -1,5 +1,5 @@
 const std = @import("std");
-const HyperLogLog = @import("main.zig").DefaultHyperLogLog;
+const HyperLogLog = @import("hyperloglog.zig").DefaultHyperLogLog;
 const RndGen = std.rand.DefaultPrng;
 
 var rnd = RndGen.init(0);
@@ -8,7 +8,7 @@ pub fn main() !void {
     const count = 1e7;
     const alloc = std.heap.page_allocator;
 
-    var hll = try HyperLogLog().init(alloc);
+    var hll = try HyperLogLog.init(alloc);
     defer hll.deinit();
 
     var i: u64 = 0;
