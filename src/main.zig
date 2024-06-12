@@ -11,7 +11,7 @@ fn alpha(comptime p: u8) f64 {
         4 => return 0.673,
         5 => return 0.697,
         6 => return 0.709,
-        else => return 0.7213 / (1.0 + 1.079 / @intToFloat(f64, 1 << p)),
+        else => return 0.7213 / (1.0 + 1.079 / @as(f64, @floatFromInt(1 << p))),
     }
 }
 
@@ -71,7 +71,7 @@ pub fn HyperLogLog(comptime p: u8) type {
 
         fn add_to_dense(self: *Self, x: u64) !void {
             var k = x >> max;
-            var val = @intCast(u6, @clz((x << p) ^ maxx)) + 1;
+            var val = @as(u6, @intCast(@clz((x << p) ^ maxx))) + 1;
             if (val > self.dense[k]) {
                 self.dense[k] = val;
             }
@@ -88,7 +88,7 @@ pub fn HyperLogLog(comptime p: u8) type {
 
         pub fn cardinality(self: *Self) u64 {
             if (self.is_sparse) {
-                return @intCast(u64, self.set.len());
+                return @as(u64, @intCast(self.set.len()));
             }
 
             var sum: f64 = 0;
@@ -98,14 +98,14 @@ pub fn HyperLogLog(comptime p: u8) type {
                 if (x == 0) {
                     z += 1;
                 }
-                sum += 1.0 / math.pow(f64, 2.0, @intToFloat(f64, x));
+                sum += 1.0 / math.pow(f64, 2.0, @as(f64, @floatFromInt(x)));
             }
-            const m_float = @intToFloat(f64, m);
+            const m_float = @as(f64, @floatFromInt(m));
 
             const beta_value: f64 = beta(p, z);
             var est = alpha(p) * m_float * (m_float - z) / (beta_value + sum);
 
-            return @floatToInt(u64, est + 0.5);
+            return @as(u64, @intFromFloat(est + 0.5));
         }
 
         pub fn merge(self: *Self, other: *Self) !void {
@@ -124,7 +124,7 @@ pub fn HyperLogLog(comptime p: u8) type {
                 try self.to_dense();
             }
 
-            for (self.dense) |*x, i| {
+            for (self.dense, 0..) |*x, i| {
                 if (other.dense[i] > x.*) {
                     x.* = other.dense[i];
                 }
@@ -161,11 +161,11 @@ fn testHash(key: anytype) u64 {
 }
 
 fn estimateError(got: u64, expected: u64) f64 {
-    var delta = @intToFloat(f64, got) - @intToFloat(f64, expected);
+    var delta = @as(f64, @floatFromInt(got)) - @as(f64, @floatFromInt(expected));
     if (delta < 0) {
         delta = -delta;
     }
-    return delta / @intToFloat(f64, expected);
+    return delta / @as(f64, @floatFromInt(expected));
 }
 
 test "init" {
